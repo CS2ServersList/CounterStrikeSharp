@@ -62,5 +62,3 @@ Our ranking system is designed to highlight active and engaging servers using mu
 - **Discord**: [Join our Community](https://discord.gg/cs2serverlist)
 
 ---
-
-❤️ Supporting small server communities since 2025
