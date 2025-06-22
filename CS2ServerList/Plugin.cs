@@ -22,7 +22,7 @@ public sealed partial class Plugin : BasePlugin, IPluginConfig<PluginConfig>
     private bool isRequestInProgress = false;
     private DateTime lastRequestTime;
     private TimeSpan requestCooldown = TimeSpan.FromSeconds(5); // Added cooldown time
-    private HttpClient httpClient = new HttpClient();
+    private HttpClient? httpClient;
     private delegate nint CNetworkSystem_UpdatePublicIp(nint networkSystem);
     private CNetworkSystem_UpdatePublicIp? _networkSystemUpdatePublicIp;
     private bool isWarmupRound = false;
@@ -57,7 +57,10 @@ public sealed partial class Plugin : BasePlugin, IPluginConfig<PluginConfig>
 
     public override void Load(bool hotReload)
     {
-
+        // Initialize HttpClient with minimal headers to avoid bot detection
+        httpClient = new HttpClient();
+        httpClient.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36");
+        
         var networkSystem = NativeAPI.GetValveInterface(0, "NetworkSystemVersion001");
         unsafe
         {
@@ -509,9 +512,10 @@ public sealed partial class Plugin : BasePlugin, IPluginConfig<PluginConfig>
 
             var contentData = new FormUrlEncodedContent(formData);
 
-
-            // Set content type header explicitly
+            // Set simple headers for API request
             httpClient.DefaultRequestHeaders.Clear();
+            httpClient.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36");
+            httpClient.DefaultRequestHeaders.Add("Referer", "https://cs2serverlist.com/");
             httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", postToken);
 
             var postResponse = await httpClient.PostAsync(postUrl, contentData);
@@ -638,136 +642,6 @@ public sealed partial class Plugin : BasePlugin, IPluginConfig<PluginConfig>
         };
     }
 
-    public async Task SendServerData(bool includePlayers = true)
-    {
-        isRequestInProgress = true;
-        lastRequestTime = DateTime.UtcNow;
-
-
-        try
-        {
-            // Clean up invalid player entries
-            Players.RemoveAll(p => p._controller == null || !p._controller.IsValid);
-
-            var players = Utilities.GetPlayers()
-                .Where(isValidPlayer)
-                .Where(x => x.TeamNum != (byte)CsTeam.Spectator && x.TeamNum != (byte)CsTeam.None);
-
-            var playerInfos = new List<PlayerInfoEntityServerData>();
-            if (players.Any() && includePlayers)
-            {
-                // Update our Players list with the current game state
-                foreach (var player in players)
-                {
-                    var existingPlayer = GetPlayer(player.SteamID);
-                    if (existingPlayer != null)
-                    {
-                        // Update controller only
-                        existingPlayer._controller = player;
-                    }
-                    else
-                    {
-                        // Create new player if not exists
-                        var newPlayer = new PlayerEntity
-                        {
-                            _controller = player,
-                            steam_id = player.SteamID,
-                            team = player.TeamNum,
-                            teamJoinTime = DateTime.Now
-                        };
-                        Players.Add(newPlayer);
-                    }
-                }
-
-                // Convert Players list to PlayerInfoEntityServerData
-                playerInfos = Players
-                    .Where(p => p._controller != null && isValidPlayer(p._controller))
-                    .Select(ConvertToPlayerInfoEntity)
-                    .ToList();
-            }
-
-            string postUrl = $"{API_END}/server-data";
-            string postToken = "916a783bfcddf78721983bf3c14ab84e";
-
-            // Create form data with proper form-url-encoded format
-            var formData = new List<KeyValuePair<string, string>>
-                    {
-                        new KeyValuePair<string, string>("event_type", "server_status_update"),
-                        new KeyValuePair<string, string>("map", Server.MapName),
-                        new KeyValuePair<string, string>("server_ip", GetServerIp()),
-                        new KeyValuePair<string, string>("max_players", Server.MaxPlayers.ToString()),
-                        new KeyValuePair<string, string>("online_players", playerInfos.Count.ToString()),
-                        new KeyValuePair<string, string>("bots_count", getBotsCount().ToString())
-                    };
-
-            // Add player data as individual form fields
-            for (int i = 0; i < playerInfos.Count; i++)
-            {
-                var player = playerInfos[i];
-                formData.Add(new KeyValuePair<string, string>($"players[{i}][username]", player.username));
-                formData.Add(new KeyValuePair<string, string>($"players[{i}][steam_id]", player.steam_id.ToString()));
-                formData.Add(new KeyValuePair<string, string>($"players[{i}][kills]", player.kills.ToString()));
-                formData.Add(new KeyValuePair<string, string>($"players[{i}][deaths]", player.deaths.ToString()));
-                formData.Add(new KeyValuePair<string, string>($"players[{i}][headshots]", player.headshots.ToString()));
-                formData.Add(new KeyValuePair<string, string>($"players[{i}][assists]", player.assists.ToString()));
-                formData.Add(new KeyValuePair<string, string>($"players[{i}][rounds_wins]", player.rounds_wins.ToString()));
-                formData.Add(new KeyValuePair<string, string>($"players[{i}][rounds_loses]", player.rounds_loses.ToString()));
-                formData.Add(new KeyValuePair<string, string>($"players[{i}][playtime]", player.playtime.ToString()));
-                formData.Add(new KeyValuePair<string, string>($"players[{i}][team]", player.team.ToString()));
-                formData.Add(new KeyValuePair<string, string>($"players[{i}][team_string]", player.team_string));
-
-                formData.Add(new KeyValuePair<string, string>($"players[{i}][current_kills]", player.current_kills.ToString()));
-                formData.Add(new KeyValuePair<string, string>($"players[{i}][current_deaths]", player.current_deaths.ToString()));
-                formData.Add(new KeyValuePair<string, string>($"players[{i}][current_headshots]", player.current_headshots.ToString()));
-                formData.Add(new KeyValuePair<string, string>($"players[{i}][current_assists]", player.current_assists.ToString()));
-
-                // Add avatar hash if available
-                if (!string.IsNullOrEmpty(player.avatar_hash))
-                {
-                    formData.Add(new KeyValuePair<string, string>($"players[{i}][avatar_hash]", player.avatar_hash));
-                }
-            }
-
-            var contentData = new FormUrlEncodedContent(formData);
-
-
-            // Clear previous headers and set new ones
-            httpClient.DefaultRequestHeaders.Clear();
-            httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", postToken);
-
-            try
-            {
-                var postResponse = await httpClient.PostAsync(postUrl, contentData);
-                string responseContent = await postResponse.Content.ReadAsStringAsync();
-
-                if (postResponse.StatusCode != HttpStatusCode.OK && postResponse.StatusCode != HttpStatusCode.Created)
-                {
-                    Logger.LogError("Failed to send server data. Status: {0}, Response: {1}", postResponse.StatusCode, responseContent);
-                }
-            }
-            catch (HttpRequestException ex)
-            {
-                Logger.LogError("API connection error: {0}", ex.Message);
-            }
-            catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException)
-            {
-                Logger.LogError("API request timeout");
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError("Unexpected error while sending server data: {0}", ex.Message);
-            }
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError("Unexpected error occurred: {0}", ex.Message);
-        }
-        finally
-        {
-            isRequestInProgress = false;
-        }
-
-    }
 
     private IEnumerable<PlayerInfoEntityServerData> GetPlayerInfos(IEnumerable<CCSPlayerController> players)
     {
@@ -841,6 +715,10 @@ public sealed partial class Plugin : BasePlugin, IPluginConfig<PluginConfig>
         try
         {
             using var client = new HttpClient();
+            // Add minimal browser-like headers for Steam requests
+            client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36");
+            client.DefaultRequestHeaders.Add("Referer", "https://steamcommunity.com/");
+            
             HttpResponseMessage response = await client.GetAsync($"https://steamcommunity.com/profiles/{steamID}/?xml=1");
             response.EnsureSuccessStatusCode();
             string xmlContent = await response.Content.ReadAsStringAsync();
