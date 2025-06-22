@@ -13,10 +13,10 @@ namespace Plugin;
 public sealed partial class Plugin : BasePlugin, IPluginConfig<PluginConfig>
 {
     public override string ModuleName => "CS2ServerList";
-    public override string ModuleVersion => "1.0.0";
+    public override string ModuleVersion => "1.0.1";
     public override string ModuleAuthor => "Wohaho";
 
-    public PluginConfig? Config { get; set; }
+    public PluginConfig? Config { get; set; } =
 
     private string API_END = "https://cs2serverlist.com/api";
     private bool isRequestInProgress = false;
